@@ -1,6 +1,7 @@
 """FAISS 인덱스 보관·저장·삭제 (명세서 6장).
 
 - 인덱스 경로: {VECTOR_STORE_DIR}/{EMBEDDING_MODEL}/  → 모델이 바뀌면 다른 폴더
+- 점수: 벡터를 길이 1로 정규화하고 내적으로 비교 → 점수 = 코사인 유사도 (-1~1, 높을수록 비슷)
 - 쓰기(추가·삭제·저장)는 잠금 하나로 직렬화. uvicorn worker는 1개로 띄운다.
 """
 
@@ -10,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores.utils import DistanceStrategy
 from langchain_core.documents import Document
 
 from app.core import models
@@ -18,6 +20,12 @@ from app.core.errors import AIUnavailableError
 
 logger = logging.getLogger("ai.vector_store")
 INDEX_NAME = "index"
+
+# 만들 때와 불러올 때 반드시 같은 옵션을 써야 한다 (저장 파일에는 이 설정이 들어가지 않음)
+FAISS_OPTIONS = {
+    "distance_strategy": DistanceStrategy.MAX_INNER_PRODUCT,
+    "normalize_L2": True,
+}
 
 
 class VectorStore:
@@ -57,6 +65,7 @@ class VectorStore:
                 models.get_embeddings(),
                 index_name=INDEX_NAME,
                 allow_dangerous_deserialization=True,
+                **FAISS_OPTIONS,
             )
             logger.info("vector store loaded chunks=%s", len(self._store.docstore._dict))
         except Exception:
@@ -93,7 +102,9 @@ class VectorStore:
             # 3) 추가 후 디스크에 저장
             pairs = list(zip(texts, vectors))
             if self._store is None:
-                self._store = FAISS.from_embeddings(pairs, embeddings, metadatas=metadatas, ids=ids)
+                self._store = FAISS.from_embeddings(
+                    pairs, embeddings, metadatas=metadatas, ids=ids, **FAISS_OPTIONS
+                )
             else:
                 self._store.add_embeddings(pairs, metadatas=metadatas, ids=ids)
             self._save_unlocked()
@@ -125,7 +136,7 @@ class VectorStore:
 
     @property
     def store(self) -> FAISS | None:
-        """검색용 (feat/chat 에서 사용)."""
+        """검색용 (rag_chain 에서 사용)."""
         if not self._loaded:
             self.load()
         if self.failed:
