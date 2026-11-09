@@ -8,6 +8,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.router import internal_router
 from app.core.config import settings
+from app.core.indexing import cleanup_stale_extracts
 from app.core.vector_store import vector_store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -18,6 +19,9 @@ logger = logging.getLogger("ai")
 async def lifespan(app: FastAPI):
     # 기동 시 인덱스를 불러온다. 폴더가 없으면 빈 상태, 깨져 있으면 /health 가 503
     vector_store.load()
+    # 이전 실행에서 남은 오래된 추출 임시 파일 정리
+    removed = cleanup_stale_extracts()
+    logger.info("startup stale_extracts_removed=%s", removed)
     yield
 
 

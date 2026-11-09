@@ -19,6 +19,9 @@ PDF_MIME = "application/pdf"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 MAX_FILE_BYTES = 20 * 1024 * 1024  # Backend에서도 검사하지만 한 번 더 막는다
 
+# 머리말·꼬리말로 볼 수 있는 위치: 페이지 맨 위 2줄, 맨 아래 2줄
+EDGE_LINES = 2
+
 # 쪽번호만 있는 줄: "3", "- 3 -", "3 / 12", "Page 3"
 PAGE_NUMBER_LINE = re.compile(
     r"^(?:-\s*)?\d+(?:\s*-)?$|^\d+\s*/\s*\d+$|^page\s*\d+$", re.IGNORECASE
@@ -92,23 +95,46 @@ def _load_docx(path: Path) -> list[PageText]:
 # ---------- 3. 정리 ----------
 
 def _clean_lines(text: str) -> list[str]:
+    """공백을 정리하고 빈 줄만 지운다. (숫자만 있는 줄도 본문일 수 있어 여기서는 지우지 않음)"""
     lines = []
     for raw in text.splitlines():
         line = MULTI_SPACE.sub(" ", raw).strip()
-        if not line or PAGE_NUMBER_LINE.match(line):
-            continue
-        lines.append(line)
+        if line:
+            lines.append(line)
     return lines
 
 
-def _remove_repeated_lines(pages_lines: list[list[str]]) -> list[list[str]]:
-    """3쪽 이상 문서에서 절반 이상의 쪽에 똑같이 나오는 줄은 머리말·꼬리말로 보고 지운다."""
+def _edge_indexes(n: int) -> set[int]:
+    """줄 n개 중 맨 위 EDGE_LINES줄, 맨 아래 EDGE_LINES줄의 위치."""
+    return set(range(min(EDGE_LINES, n))) | set(range(max(n - EDGE_LINES, 0), n))
+
+
+def _strip_page_numbers(lines: list[str]) -> list[str]:
+    """페이지 맨 위·아래에 있는 쪽번호 줄만 지운다. 본문 중간의 '14' 같은 표 숫자는 남긴다."""
+    edges = _edge_indexes(len(lines))
+    return [line for i, line in enumerate(lines) if not (i in edges and PAGE_NUMBER_LINE.match(line))]
+
+
+def _remove_repeated_edge_lines(pages_lines: list[list[str]]) -> list[list[str]]:
+    """3쪽 이상 문서에서, 절반 이상의 쪽 '맨 위·아래'에 똑같이 나오는 줄은 머리말·꼬리말로 보고 지운다.
+
+    본문 중간에 반복되는 표 머리글 등은 건드리지 않는다.
+    """
     if len(pages_lines) < 3:
         return pages_lines
-    counts = Counter(line for lines in pages_lines for line in set(lines))
+
+    counts: Counter[str] = Counter()
+    for lines in pages_lines:
+        counts.update({lines[i] for i in _edge_indexes(len(lines))})
+
     threshold = len(pages_lines) / 2
     repeated = {line for line, c in counts.items() if c >= threshold}
-    return [[line for line in lines if line not in repeated] for lines in pages_lines]
+
+    result = []
+    for lines in pages_lines:
+        edges = _edge_indexes(len(lines))
+        result.append([line for i, line in enumerate(lines) if not (i in edges and line in repeated)])
+    return result
 
 
 def split_sentences(lines: list[str]) -> list[str]:
@@ -129,9 +155,17 @@ def extract(path: Path, mime_type: str) -> ExtractResult:
         raise InvalidFileError("file too large")
 
     check_signature(path, mime_type)
-    raw_pages = _load_pdf(path) if mime_type == PDF_MIME else _load_docx(path)
 
-    pages_lines = _remove_repeated_lines([_clean_lines(p.text) for p in raw_pages])
+    if mime_type == PDF_MIME:
+        raw_pages = _load_pdf(path)
+        pages_lines = [_clean_lines(p.text) for p in raw_pages]
+        pages_lines = _remove_repeated_edge_lines(pages_lines)
+        pages_lines = [_strip_page_numbers(lines) for lines in pages_lines]
+    else:
+        # DOCX는 페이지 구분·쪽번호가 본문에 섞이지 않아서 정리만 한다
+        raw_pages = _load_docx(path)
+        pages_lines = [_clean_lines(p.text) for p in raw_pages]
+
     pages = [PageText(p.page_number, "\n".join(lines)) for p, lines in zip(raw_pages, pages_lines)]
 
     sentences = split_sentences([line for lines in pages_lines for line in lines])

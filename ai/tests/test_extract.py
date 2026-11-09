@@ -6,7 +6,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
-from app.core.extract import DOCX_MIME, PDF_MIME, split_sentences
+from app.core.extract import (
+    DOCX_MIME,
+    PDF_MIME,
+    _remove_repeated_edge_lines,
+    _strip_page_numbers,
+    split_sentences,
+)
 from app.main import app
 
 client = TestClient(app)
@@ -75,13 +81,33 @@ def test_line_without_punctuation_kept_as_one():
     assert split_sentences(["항목 금액 비고"]) == ["항목 금액 비고"]
 
 
+# ---------- 쪽번호·머리말 (PDF 페이지 정리) ----------
+
+def test_page_number_removed_only_at_page_edges():
+    # 맨 아래 "3"은 쪽번호로 지우고, 본문 중간의 표 숫자 "14"는 남긴다
+    lines = ["제1조 목적", "이 규정은 출장비에 관한 것이다.", "14", "제2조 기한", "3"]
+    assert _strip_page_numbers(lines) == ["제1조 목적", "이 규정은 출장비에 관한 것이다.", "14", "제2조 기한"]
+
+
+def test_repeated_header_removed_only_at_page_edges():
+    pages = [
+        ["사내 규정집", "본문 1-1", "구분 금액", "본문 1-2", "1"],
+        ["사내 규정집", "본문 2-1", "구분 금액", "본문 2-2", "2"],
+        ["사내 규정집", "본문 3-1", "구분 금액", "본문 3-2", "3"],
+    ]
+    result = _remove_repeated_edge_lines(pages)
+    # 매 쪽 맨 위의 "사내 규정집"은 머리말로 지우고, 본문 중간의 "구분 금액"은 남긴다
+    assert all("사내 규정집" not in lines for lines in result)
+    assert all("구분 금액" in lines for lines in result)
+
+
 # ---------- 정상 추출 ----------
 
 def test_docx_extract_ok(dirs):
     upload, store = dirs
     make_docx(upload / "7" / "1" / "a.docx", [
         "출장비는 귀국 후 14일 이내 정산한다. 영수증을 첨부한다.",
-        "3",  # 쪽번호처럼 숫자만 있는 줄은 지워져야 함
+        "14",  # DOCX에는 쪽번호가 섞이지 않으므로 숫자만 있는 줄도 본문으로 남아야 함
         "문의는 총무팀으로 하세요?",
     ])
 
@@ -92,6 +118,7 @@ def test_docx_extract_ok(dirs):
     assert body["contentText"].split("\n") == [
         "출장비는 귀국 후 14일 이내 정산한다.",
         "영수증을 첨부한다.",
+        "14",
         "문의는 총무팀으로 하세요?",
     ]
     assert body["pageCount"] is None

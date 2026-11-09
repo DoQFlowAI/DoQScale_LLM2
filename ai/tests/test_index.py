@@ -1,4 +1,6 @@
 import json
+import os
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,6 +8,7 @@ from langchain_core.embeddings import DeterministicFakeEmbedding
 
 from app.core import models
 from app.core.config import settings
+from app.core.indexing import EXTRACT_TTL_SECONDS, cleanup_stale_extracts
 from app.core.vector_store import vector_store
 from app.main import app
 
@@ -32,6 +35,11 @@ def write_extract(store_dir, version_id, pages):
     out = store_dir / "_extract"
     out.mkdir(exist_ok=True)
     (out / f"{version_id}.json").write_text(json.dumps(pages, ensure_ascii=False), encoding="utf-8")
+
+
+def make_old(path, hours=2):
+    past = time.time() - hours * 3600
+    os.utime(path, (past, past))
 
 
 SAMPLE_PAGES = [
@@ -161,6 +169,30 @@ def test_delete_on_empty_store(store_dir):
     res = delete({"documentId": 7, "keepVersionId": None})
     assert res.status_code == 200
     assert res.json() == {"deleted": 0}
+
+
+# ---------- 추출 임시 파일 정리 ----------
+
+def test_stale_extract_of_unindexed_version_is_cleaned(store_dir):
+    # 버전 10: 중간 버전이라 색인되지 않고 2시간째 남아 있는 파일
+    write_extract(store_dir, 10, SAMPLE_PAGES)
+    make_old(store_dir / "_extract" / "10.json")
+    # 버전 11: 다른 문서에서 방금 추출해서 곧 색인될 파일
+    write_extract(store_dir, 11, SAMPLE_PAGES)
+
+    index(store_dir, 7, 33, 3)
+
+    assert not (store_dir / "_extract" / "10.json").exists()  # 오래된 것은 정리
+    assert (store_dir / "_extract" / "11.json").exists()      # 방금 것은 남김
+
+
+def test_cleanup_counts_only_old_files(store_dir):
+    write_extract(store_dir, 1, SAMPLE_PAGES)
+    write_extract(store_dir, 2, SAMPLE_PAGES)
+    make_old(store_dir / "_extract" / "1.json", hours=EXTRACT_TTL_SECONDS / 3600 + 1)
+
+    assert cleanup_stale_extracts() == 1
+    assert cleanup_stale_extracts() == 0  # 두 번째는 지울 게 없음
 
 
 # ---------- 헬스체크 ----------

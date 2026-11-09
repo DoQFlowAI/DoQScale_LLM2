@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core.errors import AIUnavailableError, InvalidFileError
-from app.core.indexing import build_chunks, delete_page_texts, load_page_texts
+from app.core.indexing import build_chunks, cleanup_stale_extracts, delete_page_texts, load_page_texts
 from app.core.vector_store import vector_store
 from app.schemas.index import DeleteIndexRequest, DeleteIndexResponse, IndexRequest, IndexResponse
 
@@ -27,8 +27,11 @@ def index_version(req: IndexRequest, request: Request) -> IndexResponse:
 
     # 색인이 끝난 뒤에만 임시 파일 삭제 (실패하면 남겨 둬서 재시도 가능)
     delete_page_texts(req.version_id)
-    logger.info("index ok trace=%s documentId=%s versionId=%s chunks=%s",
-                trace, req.document_id, req.version_id, len(docs))
+    # 색인되지 않는 중간 버전의 오래된 임시 파일도 같이 정리
+    stale = cleanup_stale_extracts()
+
+    logger.info("index ok trace=%s documentId=%s versionId=%s chunks=%s stale_removed=%s",
+                trace, req.document_id, req.version_id, len(docs), stale)
     return IndexResponse(status="READY", chunk_count=len(docs))
 
 
