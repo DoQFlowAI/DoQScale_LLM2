@@ -26,7 +26,7 @@ services:
       EMBEDDING_MODEL: text-embedding-3-small
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       AI_INTERNAL_KEY: ${AI_INTERNAL_KEY}
-      RAG_SCORE_THRESHOLD: "0.35"
+      RAG_SCORE_THRESHOLD: "0.20"
     volumes:
       - faiss_data:/app/faiss          # 색인 저장 (지우면 재색인 필요)
       - uploads:/app/uploads:ro        # Backend 업로드 볼륨을 읽기 전용으로
@@ -56,7 +56,7 @@ volumes:
 | `AI_INTERNAL_KEY` | O | 16자 이상 임의 문자열 | GitHub Secrets. Backend와 같은 값. 없거나 짧으면 컨테이너가 기동하지 않음 |
 | `LLM_PROVIDER` / `LLM_MODEL` | - | `openai` / `gpt-4o-mini` | 기본값 동일 |
 | `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` | - | `openai` / `text-embedding-3-small` | 바꾸면 재색인 필요 |
-| `RAG_SCORE_THRESHOLD` | - | `0.35` | 코사인 유사도 기준값. 시연 질문셋으로 확정 예정 |
+| `RAG_SCORE_THRESHOLD` | - | `0.20` | 코사인 유사도 기준값. 질문셋 평가(2026-11-09)로 확정 |
 | `VECTOR_STORE_DIR` / `UPLOAD_DIR` | - | `/app/faiss` / `/app/uploads` | 이미지 기본값. 바꾸지 않음 |
 | `ENABLE_DOCS` | - | `false` | 배포에서는 Swagger 끔 |
 

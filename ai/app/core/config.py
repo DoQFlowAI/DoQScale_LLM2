@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     # RAG
     RAG_TOP_K: int = 5
     RAG_FETCH_K: int = 100
-    RAG_SCORE_THRESHOLD: float = 0.35
+    RAG_SCORE_THRESHOLD: float = 0.20  # 질문셋 평가(evaluation/)로 확정
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 100
 

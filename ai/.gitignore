@@ -19,3 +19,8 @@ faiss/
 .vscode/
 .DS_Store
 Thumbs.db
+
+
+### 평가 작업 폴더 ###
+evaluation/.work/
+evaluation/results/

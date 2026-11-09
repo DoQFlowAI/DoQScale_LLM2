@@ -22,7 +22,8 @@ MAX_ATTEMPTS = 2  # 처음 1번 + 재시도 1번
 TRUNCATED_NOTE = " (일부 변경만 요약)"
 
 SYSTEM_PROMPT = """너는 사내 규정 문서의 버전 간 변경점을 요약하는 도우미다.
-- <changes> 안의 '- 변경 전', '+ 변경 후' 문장만 보고 무엇이 어떻게 바뀌었는지 한국어 한두 문장으로 요약한다. '~됨' 체로 쓴다.
+- <changes> 안의 '- 변경 전', '+ 변경 후' 문장만 보고 무엇이 어떻게 바뀌었는지 한국어로 요약한다. '~됨' 체로 쓴다.
+- [CHANGE], [INSERT], [DELETE] 블록을 하나도 빠뜨리지 말고 모두 요약에 담는다. 블록이 여러 개면 쉼표로 이어 최대 3문장으로 쓴다.
 - 변경 유형은 다음 중 하나로 고른다.
   PROCEDURE: 절차, 담당자, 승인 흐름, 순서가 바뀜
   NUMERIC: 금액, 기한, 수치, 비율이 바뀜
@@ -35,7 +36,7 @@ class SegmentSummary(BaseModel):
     """LLM이 채워서 돌려주는 구조화 출력."""
 
     change_type: Literal["PROCEDURE", "NUMERIC", "WORDING"] = Field(description="변경 유형")
-    summary: str = Field(description="무엇이 어떻게 바뀌었는지 한국어 한두 문장")
+    summary: str = Field(description="모든 변경 블록을 담은 한국어 요약 (최대 3문장)")
 
 
 class HistoryState(TypedDict):
