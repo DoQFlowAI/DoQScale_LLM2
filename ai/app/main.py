@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api.router import internal_router
 from app.core.config import settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -48,6 +49,10 @@ async def unhandled_error_handler(request: Request, exc: Exception):
     # 예상 못 한 오류: 스택은 로그에만, 응답은 고정 문구
     logger.exception("unhandled error trace=%s path=%s", _trace_id(request), request.url.path)
     return JSONResponse(status_code=500, content={"code": "INTERNAL_ERROR"})
+
+
+# /internal/** API 전부 (X-Internal-Key 검사 자동 적용)
+app.include_router(internal_router)
 
 
 @app.get("/health")
