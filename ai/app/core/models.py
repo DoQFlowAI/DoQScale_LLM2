@@ -17,7 +17,10 @@ def _require_key(name: str, value: str) -> str:
     return value
 
 
-def get_llm(streaming: bool = False) -> BaseChatModel:
+def get_llm(streaming: bool = False, max_retries: int = LLM_MAX_RETRIES) -> BaseChatModel:
+    """max_retries: 클라이언트 자체 재시도 횟수.
+    호출하는 쪽에서 따로 재시도하면(변천사 그래프) 0으로 넘겨 재시도가 겹치지 않게 한다.
+    """
     provider = settings.LLM_PROVIDER
 
     if provider == "openai":
@@ -29,7 +32,7 @@ def get_llm(streaming: bool = False) -> BaseChatModel:
             temperature=settings.LLM_TEMPERATURE,
             max_tokens=settings.LLM_MAX_TOKENS,
             timeout=LLM_TIMEOUT_SECONDS,
-            max_retries=LLM_MAX_RETRIES,
+            max_retries=max_retries,
             streaming=streaming,
         )
 
@@ -42,7 +45,7 @@ def get_llm(streaming: bool = False) -> BaseChatModel:
             temperature=settings.LLM_TEMPERATURE,
             max_tokens=settings.LLM_MAX_TOKENS,
             timeout=LLM_TIMEOUT_SECONDS,
-            max_retries=LLM_MAX_RETRIES,
+            max_retries=max_retries,
             streaming=streaming,
         )
 

@@ -58,3 +58,9 @@ def test_unknown_embedding_provider_fails(monkeypatch, fake_keys):
     monkeypatch.setattr(settings, "EMBEDDING_PROVIDER", "ollama")
     with pytest.raises(RuntimeError):
         models.get_embeddings()
+
+
+def test_max_retries_override(monkeypatch, fake_keys):
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "openai")
+    assert models.get_llm().max_retries == 1             # 기본: 클라이언트 재시도 1회
+    assert models.get_llm(max_retries=0).max_retries == 0  # 변천사 그래프용: 끔
