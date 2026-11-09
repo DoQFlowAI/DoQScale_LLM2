@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -7,15 +8,25 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.router import internal_router
 from app.core.config import settings
+from app.core.vector_store import vector_store
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("ai")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 기동 시 인덱스를 불러온다. 폴더가 없으면 빈 상태, 깨져 있으면 /health 가 503
+    vector_store.load()
+    yield
+
 
 app = FastAPI(
     title="DoQScale AI Module",
     docs_url="/docs" if settings.ENABLE_DOCS else None,
     redoc_url=None,
     openapi_url="/openapi.json" if settings.ENABLE_DOCS else None,
+    lifespan=lifespan,
 )
 
 # 명세서 4.7: 응답에는 code만, 상세 원인은 서버 로그에만
@@ -57,5 +68,7 @@ app.include_router(internal_router)
 
 @app.get("/health")
 def health():
-    # 인덱스 로딩을 붙이면(feat/index) 실패 시 503을 돌려주도록 바꿀 예정
+    # 명세서 4.6: 인덱스를 불러오지 못한 상태면 503
+    if vector_store.failed:
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
     return {"status": "ok"}
