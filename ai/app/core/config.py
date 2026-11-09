@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,6 +36,14 @@ class Settings(BaseSettings):
 
     # 개발 편의: true면 /docs(Swagger) 화면을 켬. 배포에서는 false
     ENABLE_DOCS: bool = False
+
+    @field_validator("AI_INTERNAL_KEY")
+    @classmethod
+    def internal_key_long_enough(cls, v: SecretStr) -> SecretStr:
+        # 짧은 키("1234" 같은)로는 아예 서버가 뜨지 않게 막는다
+        if len(v.get_secret_value()) < 16:
+            raise ValueError("AI_INTERNAL_KEY는 16자 이상이어야 합니다")
+        return v
 
 
 @lru_cache
