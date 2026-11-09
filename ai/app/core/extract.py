@@ -5,11 +5,11 @@ import os
 import re
 import tempfile
 import zipfile
+import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-import docx2txt
 from pypdf import PdfReader
 
 from app.core.config import settings
@@ -18,6 +18,8 @@ from app.core.errors import InvalidFileError
 PDF_MIME = "application/pdf"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 MAX_FILE_BYTES = 20 * 1024 * 1024  # Backend에서도 검사하지만 한 번 더 막는다
+MAX_DOCX_XML_BYTES = 50 * 1024 * 1024  # 압축을 푼 document.xml 크기 상한 (압축 폭탄 방지)
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 # 머리말·꼬리말로 볼 수 있는 위치: 페이지 맨 위 2줄, 맨 아래 2줄
 EDGE_LINES = 2
@@ -84,12 +86,67 @@ def _load_pdf(path: Path) -> list[PageText]:
         raise InvalidFileError("pdf read failed") from e
 
 
+def _run_text(node: ET.Element) -> str:
+    """단락·셀 안의 글자를 순서대로 모은다. 탭은 공백, 줄바꿈은 공백으로."""
+    parts = []
+    for el in node.iter():
+        if el.tag == f"{W}t" and el.text:
+            parts.append(el.text)
+        elif el.tag in (f"{W}tab", f"{W}br", f"{W}cr"):
+            parts.append(" ")
+    return "".join(parts).strip()
+
+
+def _table_lines(tbl: ET.Element) -> list[str]:
+    """표를 행 단위 한 줄로 바꾼다. 첫 행은 머리글로 보고 각 값 앞에 붙인다.
+
+    예) 머리글 [구분, 사원, 팀장], 행 [숙박비(1박), 70,000원, 90,000원]
+        → "숙박비(1박): 사원 70,000원, 팀장 90,000원"
+    칸마다 따로 줄을 만들면 '90,000원'이 어느 직급 값인지 사라져서
+    검색·답변·버전 비교가 모두 부정확해진다.
+    """
+    rows = []
+    for tr in tbl.findall(f"{W}tr"):
+        cells = [_run_text(tc) for tc in tr.findall(f"{W}tc")]
+        if any(cells):
+            rows.append(cells)
+    if not rows:
+        return []
+    header, body = rows[0], rows[1:]
+    if not body or len(header) < 2:
+        return [" | ".join(c for c in row if c) for row in rows]
+
+    lines = []
+    for row in body:
+        label, values = row[0], row[1:]
+        pairs = [f"{h} {v}".strip() for h, v in zip(header[1:], values) if v]
+        lines.append(f"{label}: {', '.join(pairs)}" if label else ", ".join(pairs))
+    return lines
+
+
 def _load_docx(path: Path) -> list[PageText]:
+    """word/document.xml 을 직접 읽어 단락은 한 줄씩, 표는 행 단위로 뽑는다."""
     try:
-        text = docx2txt.process(str(path)) or ""
+        with zipfile.ZipFile(path) as z:
+            info = z.getinfo("word/document.xml")
+            if info.file_size > MAX_DOCX_XML_BYTES:
+                raise InvalidFileError("docx too large")
+            root = ET.fromstring(z.read(info))
+    except InvalidFileError:
+        raise
     except Exception as e:
         raise InvalidFileError("docx read failed") from e
-    return [PageText(None, text)]
+
+    body = root.find(f"{W}body")
+    lines: list[str] = []
+    for child in (body if body is not None else []):
+        if child.tag == f"{W}p":
+            text = _run_text(child)
+            if text:
+                lines.append(text)
+        elif child.tag == f"{W}tbl":
+            lines.extend(_table_lines(child))
+    return [PageText(None, "\n".join(lines))]
 
 
 # ---------- 3. 정리 ----------

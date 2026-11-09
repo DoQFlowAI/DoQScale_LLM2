@@ -195,3 +195,43 @@ def test_invalid_version_id_is_validation_error(dirs):
 def test_no_key_returns_401(dirs):
     res = post({"versionId": 1, "filePath": "a.docx", "mimeType": DOCX_MIME}, headers={})
     assert res.status_code == 401
+
+# ---------- DOCX 표 ----------
+
+def make_docx_with_table(path, before, rows):
+    """단락 몇 개 + 표 하나짜리 DOCX를 만든다."""
+    make_docx(path, before)
+    def cell(t):
+        return f"<w:tc><w:p><w:r><w:t>{escape(t)}</w:t></w:r></w:p></w:tc>"
+    tbl = "<w:tbl>" + "".join("<w:tr>" + "".join(cell(c) for c in r) + "</w:tr>" for r in rows) + "</w:tbl>"
+    with zipfile.ZipFile(path) as z:
+        files = {n: z.read(n) for n in z.namelist()}
+    files["word/document.xml"] = files["word/document.xml"].replace(b"</w:body>", tbl.encode() + b"</w:body>")
+    with zipfile.ZipFile(path, "w") as z:
+        for n, data in files.items():
+            z.writestr(n, data)
+
+
+def test_docx_table_rows_keep_header_context(dirs):
+    upload, _ = dirs
+    make_docx_with_table(upload / "t.docx", ["직급별 지급 기준은 다음 표와 같다."], [
+        ["구분", "사원", "팀장"],
+        ["일비(1일)", "20,000원", "30,000원"],
+        ["숙박비(1박)", "70,000원", "90,000원"],
+    ])
+
+    res = post({"versionId": 1, "filePath": "t.docx", "mimeType": DOCX_MIME})
+
+    assert res.status_code == 200
+    assert res.json()["contentText"].split("\n") == [
+        "직급별 지급 기준은 다음 표와 같다.",
+        "일비(1일): 사원 20,000원, 팀장 30,000원",
+        "숙박비(1박): 사원 70,000원, 팀장 90,000원",
+    ]
+
+
+def test_docx_single_row_table_joined(dirs):
+    upload, _ = dirs
+    make_docx_with_table(upload / "t.docx", ["표 앞 문장이다."], [["항목", "비고"]])
+    res = post({"versionId": 1, "filePath": "t.docx", "mimeType": DOCX_MIME})
+    assert res.json()["contentText"].split("\n") == ["표 앞 문장이다.", "항목 | 비고"]
