@@ -1,0 +1,87 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency: deploy
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.23"
+      - run: uv sync --locked
+      - run: uv run pytest
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ai
+          push: true
+          tags: |
+            ghcr.io/doqflowai/doqflow-ai:${{ github.sha }}
+            ghcr.io/doqflowai/doqflow-ai:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: [self-hosted, doqflow-ec2]
+    steps:
+      - name: Check shared files
+        working-directory: /opt/doqflow
+        run: |
+          test -f docker-compose.yml || { echo "docker-compose.yml 없음: Frontend2 배포를 먼저 실행하세요"; exit 1; }
+          test -f .env || { echo ".env 없음: Frontend2 배포를 먼저 실행하세요"; exit 1; }
+          test -f tags.env || printf 'FRONTEND_TAG=latest\nBACKEND_TAG=latest\nAI_TAG=latest\n' > tags.env
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy
+        working-directory: /opt/doqflow
+        run: |
+          flock .deploy.lock sh -c '
+            sed -i "s/^AI_TAG=.*/AI_TAG=${GITHUB_SHA}/" tags.env
+            DC="docker compose --env-file .env --env-file tags.env"
+            $DC pull ai-module
+            $DC up -d --no-deps ai-module
+          '
+          docker image prune -f
+
+      - name: Health check
+        working-directory: /opt/doqflow
+        run: |
+          CID=$(docker compose --env-file .env --env-file tags.env ps -q ai-module)
+          for i in $(seq 1 30); do
+            STATUS=$(docker inspect -f '{{.State.Health.Status}}' "$CID")
+            echo "ai-module health: $STATUS"
+            [ "$STATUS" = healthy ] && exit 0
+            sleep 5
+          done
+          docker logs --tail 100 "$CID"
+          exit 1
