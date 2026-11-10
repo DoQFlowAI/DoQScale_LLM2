@@ -11,6 +11,13 @@ class ExtractRequest(CamelModel):
     mime_type: Literal[
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        # 텍스트 계열: Backend가 색인 직전에 임시 파일을 만들기 위해 호출한다
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "application/json",
+        "application/xml",
+        "application/yaml",
     ]
 
 
