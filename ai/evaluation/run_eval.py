@@ -27,8 +27,12 @@ EVAL_DIR = AI_DIR / "evaluation"
 WORK_DIR = EVAL_DIR / ".work"
 
 # ---------- 시연 문서 구성 ----------
-# documentId: 1 출장비(v1~v3), 2 연차휴가, 3 정보보안(기본 scope에서 제외 = 초대받지 않은 문서), 4 복리후생(Injection)
-DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+# documentId: 1 출장비(v1~v3), 2 연차휴가, 3 정보보안(기본 scope에서 제외 = 초대받지 않은 문서), 4 복리후생(Injection),
+#             5 업무 인수인계서(PDF, 근거 쪽번호 확인용)
+MIME_BY_SUFFIX = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pdf": "application/pdf",
+}
 DOCUMENTS = [
     {"documentId": 1, "name": "출장비 지급 규정", "versions": [
         (1, 101, "travel_v1.docx"),
@@ -38,12 +42,14 @@ DOCUMENTS = [
     {"documentId": 2, "name": "연차휴가 규정", "versions": [(1, 201, "leave.docx")]},
     {"documentId": 3, "name": "정보보안 규정", "versions": [(1, 301, "security.docx")]},
     {"documentId": 4, "name": "복리후생 안내", "versions": [(1, 401, "welfare.docx")]},
+    {"documentId": 5, "name": "업무 인수인계서", "versions": [(1, 501, "handover.pdf")]},
 ]
 SCOPES = {
-    "default": [103, 201, 401],  # 시연 계정: 정보보안 규정은 초대받지 않음
-    "all": [103, 201, 301, 401],  # 대조군: 전부 볼 수 있는 경우
+    "default": [103, 201, 401, 501],  # 시연 계정: 정보보안 규정은 초대받지 않음
+    "all": [103, 201, 301, 401, 501],  # 대조군: 전부 볼 수 있는 경우
 }
 # 출장비 규정 변천사 기대값 (evaluation/docs 안내서 2장)
+PDF_DOC_ID = "5"  # questions.csv의 expected_doc 값(문자열)과 비교
 EXPECTED_HISTORY = {(1, 2): "PROCEDURE", (2, 3): "PROCEDURE"}  # 섞이면 PROCEDURE 우선
 THRESHOLD_CANDIDATES = [round(0.10 + 0.05 * i, 2) for i in range(11)]  # 0.10 ~ 0.60
 
@@ -147,7 +153,8 @@ def setup_documents(client, docs_dir):
             shutil.copy(Path(docs_dir) / filename, target)
 
             res = client.post("/internal/extract", headers=HEADERS,
-                              json={"versionId": version_id, "filePath": rel, "mimeType": DOCX})
+                              json={"versionId": version_id, "filePath": rel,
+                                    "mimeType": MIME_BY_SUFFIX[Path(filename).suffix.lower()]})
             res.raise_for_status()
             contents[(doc["documentId"], version_no)] = res.json()["contentText"].split("\n")
 
@@ -206,7 +213,7 @@ def ask(client, question, scope):
     elapsed = time.monotonic() - started
     if res.status_code != 200:
         return {"status": f"HTTP {res.status_code}", "answer": "", "doc_ids": [], "version_ids": [],
-                "elapsed": elapsed}
+                "pages": [], "elapsed": elapsed}
 
     events = parse_sse(res.text)
     answer = "".join(e["token"] for e in events if isinstance(e, dict) and "token" in e)
@@ -222,6 +229,9 @@ def ask(client, question, scope):
         "answer": answer,
         "doc_ids": sorted({c["documentId"] for c in sources["chunks"]}) if sources else [],
         "version_ids": sources["sourceVersionIds"] if sources else [],
+        # 근거 위치 "문서ID:p쪽" (PDF만 쪽번호가 있고 DOCX는 None이라 빠짐)
+        "pages": sorted({f"{c['documentId']}:p{c['pageNumber']}" for c in sources["chunks"]
+                         if c.get("pageNumber") is not None}) if sources else [],
         "elapsed": elapsed,
     }
 
@@ -294,6 +304,9 @@ def write_report(rows, history, out_md):
     iso_leak = sum(not r["pass"] for r in isolation)
     inj_leak = sum(not r["pass"] for r in injection)
     ctrl_ok = sum(r["pass"] for r in control)
+    # PDF 문서(업무 인수인계서)를 정답으로 둔 질문: 근거에 쪽번호가 붙었는지
+    pdf_rows = [r for r in answerable if r["expected_doc"] == PDF_DOC_ID and r["pass"]]
+    pdf_paged = sum(any(p.startswith(f"{PDF_DOC_ID}:p") for p in r["pages"]) for r in pdf_rows)
     times = [r["elapsed"] for r in rows if r["status"] in ("answered", "noAnswer")]
     table, best, ans_scores, no_scores, safe = threshold_table(rows)
 
@@ -318,6 +331,7 @@ def write_report(rows, history, out_md):
         f"| 응답 시간 p95 | 15초 이내 | {p95(times):.1f}초 (평균 {statistics.mean(times) if times else 0:.1f}초) | {mark(p95(times) <= 15)} |",
         "",
         f"- 참고: 정답 키워드가 답변에 들어간 비율 {pct(keyword, len(answerable))}",
+        f"- PDF 근거 쪽번호: 인수인계서(PDF) 질문 중 근거에 쪽번호가 붙은 비율 {pct(pdf_paged, len(pdf_rows))}",
         f"- 대조군: 정보보안 규정을 scope에 넣으면 답하는지 {pct(ctrl_ok, len(control))} "
         "(통과해야 격리 결과가 '검색이 안 돼서'가 아니라 'scope로 막아서'임을 보여줌)",
         "",
@@ -395,10 +409,10 @@ def main():
     with open(out_csv, "w", newline="", encoding="utf-8-sig") as f:  # 엑셀에서 한글이 깨지지 않게 BOM
         w = csv.writer(f)
         w.writerow(["id", "category", "question", "pass", "reason", "status", "top_score",
-                    "elapsed_s", "source_doc_ids", "answer"])
+                    "elapsed_s", "source_doc_ids", "source_pages", "answer"])
         for r in rows:
             w.writerow([r["id"], r["category"], r["question"], r["pass"], r["reason"], r["status"],
-                        r["top_score_str"], f"{r['elapsed']:.2f}", r["doc_ids"], r["answer"]])
+                        r["top_score_str"], f"{r['elapsed']:.2f}", r["doc_ids"], " ".join(r["pages"]), r["answer"]])
 
     out_md = result_dir / f"eval_{stamp}.md"
     write_report(rows, history, out_md)
