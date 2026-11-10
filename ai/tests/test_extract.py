@@ -181,7 +181,7 @@ def test_empty_document_rejected(dirs):
 # ---------- 요청 검증·인증 ----------
 
 def test_unsupported_mime_is_validation_error(dirs):
-    res = post({"versionId": 1, "filePath": "a.txt", "mimeType": "text/plain"})
+    res = post({"versionId": 1, "filePath": "a.png", "mimeType": "image/png"})
     assert res.status_code == 400
     assert res.json() == {"code": "VALIDATION_ERROR"}
 
@@ -235,3 +235,50 @@ def test_docx_single_row_table_joined(dirs):
     make_docx_with_table(upload / "t.docx", ["표 앞 문장이다."], [["항목", "비고"]])
     res = post({"versionId": 1, "filePath": "t.docx", "mimeType": DOCX_MIME})
     assert res.json()["contentText"].split("\n") == ["표 앞 문장이다.", "항목 | 비고"]
+
+
+# ---------- 텍스트 계열 (txt, md, csv, json, xml, yaml, log) ----------
+
+@pytest.mark.parametrize("name, mime", [
+    ("a.txt", "text/plain"),
+    ("a.md", "text/markdown"),
+    ("a.csv", "text/csv"),
+    ("a.json", "application/json"),
+    ("a.xml", "application/xml"),
+    ("a.yaml", "application/yaml"),
+])
+def test_text_extract_saves_index_file(dirs, name, mime):
+    upload, store = dirs
+    (upload / "7").mkdir()
+    (upload / "7" / name).write_text("\ufeff출장비 규정입니다.  숙박비는 7만 원입니다.\n\n\t정산은 14일 이내!", encoding="utf-8")
+
+    res = post({"versionId": 41, "filePath": f"7/{name}", "mimeType": mime})
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["pageCount"] is None
+    assert body["contentText"] == "출장비 규정입니다.\n숙박비는 7만 원입니다.\n정산은 14일 이내!"
+    saved = json.loads((store / "_extract" / "41.json").read_text(encoding="utf-8"))
+    assert saved == [{"pageNumber": None, "text": "출장비 규정입니다. 숙박비는 7만 원입니다.\n정산은 14일 이내!"}]
+
+
+def test_text_not_utf8_is_invalid(dirs):
+    upload, _ = dirs
+    (upload / "a.txt").write_bytes("한글".encode("cp949"))
+    res = post({"versionId": 1, "filePath": "a.txt", "mimeType": "text/plain"})
+    assert res.status_code == 400
+    assert res.json() == {"code": "INVALID_FILE"}
+
+
+def test_text_with_null_byte_is_invalid(dirs):
+    upload, _ = dirs
+    (upload / "a.txt").write_bytes(b"abc\x00def")
+    res = post({"versionId": 1, "filePath": "a.txt", "mimeType": "text/plain"})
+    assert res.status_code == 400
+
+
+def test_text_blank_is_invalid(dirs):
+    upload, _ = dirs
+    (upload / "a.txt").write_text("  \n\t\n", encoding="utf-8")
+    res = post({"versionId": 1, "filePath": "a.txt", "mimeType": "text/plain"})
+    assert res.status_code == 400

@@ -21,6 +21,17 @@ MAX_FILE_BYTES = 20 * 1024 * 1024  # Backend에서도 검사하지만 한 번 �
 MAX_DOCX_XML_BYTES = 50 * 1024 * 1024  # 압축을 푼 document.xml 크기 상한 (압축 폭탄 방지)
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
+# 텍스트 계열 MIME (Backend UploadFileValidator.FileType의 TEXT 계열과 같은 값).
+# Backend는 업로드 때 content_text를 직접 채우므로, AI Module은 색인용 임시 파일만 만든다.
+TEXT_MIMES = frozenset({
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/json",
+    "application/xml",
+    "application/yaml",
+})
+
 # 머리말·꼬리말로 볼 수 있는 위치: 페이지 맨 위 2줄, 맨 아래 2줄
 EDGE_LINES = 2
 
@@ -35,7 +46,7 @@ MULTI_SPACE = re.compile(r"[ \t\u00a0\u3000]+")
 
 @dataclass
 class PageText:
-    page_number: int | None  # DOCX는 페이지 개념이 없어 None
+    page_number: int | None  # DOCX·텍스트는 페이지 개념이 없어 None
     text: str
 
 
@@ -69,10 +80,30 @@ def check_signature(path: Path, mime_type: str) -> None:
             raise InvalidFileError("broken docx") from e
         return
 
+    if mime_type in TEXT_MIMES:
+        # 텍스트는 시그니처가 없으므로 _load_text에서 UTF-8·제어 문자를 확인한다
+        return
+
     raise InvalidFileError("unsupported mime type")
 
 
 # ---------- 2. 로드 ----------
+
+def _load_text(path: Path) -> list[PageText]:
+    """UTF-8 텍스트 파일을 그대로 읽는다. 페이지 개념이 없어 DOCX처럼 한 덩어리로 둔다.
+
+    Backend와 같은 기준: 올바른 UTF-8이 아니거나 탭·줄바꿈 외의 제어 문자(널 바이트 등)가 있으면 거부.
+    """
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise InvalidFileError("text not utf-8") from e
+    except OSError as e:
+        raise InvalidFileError("text read failed") from e
+    if any(c < " " and c not in "\t\n\r" for c in text):
+        raise InvalidFileError("text has control chars")
+    return [PageText(None, text.removeprefix("\ufeff"))]  # BOM 제거
+
 
 def _load_pdf(path: Path) -> list[PageText]:
     try:
@@ -218,9 +249,13 @@ def extract(path: Path, mime_type: str) -> ExtractResult:
         pages_lines = [_clean_lines(p.text) for p in raw_pages]
         pages_lines = _remove_repeated_edge_lines(pages_lines)
         pages_lines = [_strip_page_numbers(lines) for lines in pages_lines]
-    else:
+    elif mime_type == DOCX_MIME:
         # DOCX는 페이지 구분·쪽번호가 본문에 섞이지 않아서 정리만 한다
         raw_pages = _load_docx(path)
+        pages_lines = [_clean_lines(p.text) for p in raw_pages]
+    else:
+        # 텍스트 계열도 공백 정리만 한다
+        raw_pages = _load_text(path)
         pages_lines = [_clean_lines(p.text) for p in raw_pages]
 
     pages = [PageText(p.page_number, "\n".join(lines)) for p, lines in zip(raw_pages, pages_lines)]
