@@ -1,6 +1,7 @@
 """검색 → 프롬프트 → 스트리밍 생성 (명세서 5.2)."""
 
 import html
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -12,6 +13,8 @@ from app.core.errors import AIUnavailableError
 from app.core.vector_store import vector_store
 
 NO_ANSWER = "NO_ANSWER"
+# 답변 속 근거 표시: [1], [2] 또는 [1, 3]
+CITATION = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
 
 SYSTEM_PROMPT = """너는 사내 문서 질의응답 도우미다.
 - <context> 안의 문서 조각만 근거로 한국어로 답한다. 조각에 없는 내용은 추측하지 않는다.
@@ -95,6 +98,24 @@ def build_messages(question: str, chunks: list[RetrievedChunk]) -> list[BaseMess
 
 # ---------- 3. 생성 ----------
 
+def cited_chunks(answer: str, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    """답변이 [번호]로 실제 인용한 조각만 근거로 돌려준다.
+
+    검색은 기준값(0.20)을 넘는 조각을 최대 top_k개까지 LLM에 넘기므로,
+    그대로 근거로 내보내면 답변과 상관없는 문서까지 근거에 섞인다 (CBT 11/11).
+    인용 번호가 하나도 없으면 가장 점수가 높은 조각 하나만 근거로 둔다.
+    """
+    picked: list[int] = []
+    for group in CITATION.findall(answer):
+        for num in group.split(","):
+            i = int(num) - 1
+            if 0 <= i < len(chunks) and i not in picked:
+                picked.append(i)
+    if not picked:
+        return [max(chunks, key=lambda c: c.score)]
+    return [chunks[i] for i in sorted(picked)]
+
+
 def _sources_event(chunks: list[RetrievedChunk]) -> dict:
     return {
         "sourceVersionIds": sorted({c.version_id for c in chunks}),
@@ -119,6 +140,7 @@ async def stream_answer(question: str, chunks: list[RetrievedChunk]) -> AsyncIte
     """
     llm = models.get_llm(streaming=True)
     buffer = ""
+    answer = ""  # 근거 고르기용으로 답변 전체를 모은다
     decided = False  # True = 일반 답변으로 확정
 
     async for piece in llm.astream(build_messages(question, chunks)):
@@ -126,6 +148,7 @@ async def stream_answer(question: str, chunks: list[RetrievedChunk]) -> AsyncIte
         if not text:
             continue
         if decided:
+            answer += text
             yield {"token": text}
             continue
 
@@ -137,6 +160,7 @@ async def stream_answer(question: str, chunks: list[RetrievedChunk]) -> AsyncIte
         if NO_ANSWER.startswith(head):
             continue  # 아직 "NO", "NO_AN" 처럼 애매함 → 더 모은다
         decided = True
+        answer = buffer
         yield {"token": buffer}
 
     if not decided:
@@ -144,5 +168,5 @@ async def stream_answer(question: str, chunks: list[RetrievedChunk]) -> AsyncIte
         yield {"noAnswer": True}
         return
 
-    # 근거는 토큰 뒤 마지막 이벤트로 (명세서 4.4)
-    yield _sources_event(chunks)
+    # 근거는 토큰 뒤 마지막 이벤트로 (명세서 4.4). 답변이 인용한 조각만 보낸다
+    yield _sources_event(cited_chunks(answer, chunks))

@@ -229,3 +229,39 @@ def test_invalid_request_is_400_without_search(setup, body):
 def test_no_key_returns_401(setup):
     res = ask({"question": "질문", "scope": [33]}, headers={})
     assert res.status_code == 401
+
+# ---------- 근거 = 답변이 인용한 조각만 (CBT 11/11) ----------
+
+def _sources(events):
+    return next(e for e in events if isinstance(e, dict) and "sourceVersionIds" in e)
+
+
+def test_sources_only_include_cited_chunks(setup):
+    llm = use_llm(setup, RecordingLLM(["출장비는 14일 이내 정산합니다 ", "[1]"]))
+    events = parse_events(ask({"question": "출장비 정산 기한은?", "scope": [33, 34]}).text)
+
+    # LLM에는 두 문서가 모두 갔지만, 근거는 인용한 [1]번 조각의 문서 하나뿐
+    assert "ZEBRA-77" in prompt_text(llm) and "출장비" in prompt_text(llm)
+    src = _sources(events)
+    assert len(src["chunks"]) == 1
+    assert len(src["sourceVersionIds"]) == 1
+
+
+def test_sources_follow_multiple_citations(setup):
+    use_llm(setup, RecordingLLM(["두 문서를 보면 [1, 2] 입니다"]))
+    src = _sources(parse_events(ask({"question": "출장비와 보안", "scope": [33, 34]}).text))
+    assert src["sourceVersionIds"] == [33, 34]
+
+
+def test_sources_fall_back_to_best_chunk_without_citation(setup):
+    use_llm(setup, RecordingLLM(["인용 번호 없이 답합니다"]))
+    src = _sources(parse_events(ask({"question": DOC_A, "scope": [33, 34]}).text))
+    # 질문과 똑같은 문장(DOC_A)이 가장 점수가 높다
+    assert src["sourceVersionIds"] == [33]
+    assert len(src["chunks"]) == 1
+
+
+def test_out_of_range_citation_is_ignored(setup):
+    use_llm(setup, RecordingLLM(["없는 번호 [9] 와 있는 번호 [1]"]))
+    src = _sources(parse_events(ask({"question": "출장비", "scope": [33, 34]}).text))
+    assert len(src["chunks"]) == 1
