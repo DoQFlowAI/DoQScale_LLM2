@@ -20,7 +20,6 @@ class Settings(BaseSettings):
     # 키: SecretStr이라 print·로그에 찍혀도 '**********'로 나옴
     OPENAI_API_KEY: SecretStr = SecretStr("")
     GROQ_API_KEY: SecretStr = SecretStr("")
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
     AI_INTERNAL_KEY: SecretStr  # 기본값 없음 → 없으면 서버가 아예 안 뜸 (fail-closed)
 
     # 경로

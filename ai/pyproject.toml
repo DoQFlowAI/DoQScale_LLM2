@@ -1,7 +1,7 @@
 [project]
 name = "ai"
 version = "0.1.0"
-description = "Add your description here"
+description = "DoQFlowAI AI Module: 문서 추출·색인·RAG 질의응답·변천사 요약 (FastAPI)"
 readme = "README.md"
 authors = [
     { name = "creatorsg", email = "soninseon2004@gmail.com" }

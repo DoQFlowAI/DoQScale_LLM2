@@ -2,11 +2,20 @@
 
 AI Module(FastAPI)을 Compose에 붙일 때 필요한 내용입니다. 상세 API는 AI 모듈 연동 명세서(7번)를 봐주세요.
 
-## 1. 이미지 빌드
+## 1. 이미지 빌드·배포
+
+`main`에 push되면 GitHub Actions(`deploy.yml`)가 테스트 → 이미지 빌드 → 서버 배포를 합니다. (워크플로는 배포 담당 원종현님 작성)
+
+- 이미지: `ghcr.io/doqflowai/doqflow-ai:{커밋 SHA}`, `:latest`
+- 서버: `/opt/doqflow`의 공용 `docker-compose.yml`에서 `ai-module` 서비스만 교체 (`tags.env`의 `AI_TAG`)
+- 확인: 컨테이너 `HEALTHCHECK`(Dockerfile)가 `healthy`가 될 때까지 대기
+- PR(`develop`, `main` 대상)마다 `ci.yml`이 `uv run pytest` 실행
+
+로컬에서 이미지만 확인할 때:
 
 ```bash
 cd ai
-docker build -t doqscale-ai .
+docker build -t doqflow-ai .
 ```
 
 ## 2. Compose 설정 예시
@@ -56,7 +65,7 @@ volumes:
 | `AI_INTERNAL_KEY` | O | 16자 이상 임의 문자열 | GitHub Secrets. Backend와 같은 값. 없거나 짧으면 컨테이너가 기동하지 않음 |
 | `LLM_PROVIDER` / `LLM_MODEL` | - | `openai` / `gpt-4o-mini` | 기본값 동일 |
 | `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` | - | `openai` / `text-embedding-3-small` | 바꾸면 재색인 필요 |
-| `RAG_SCORE_THRESHOLD` | - | `0.20` | 코사인 유사도 기준값. 질문셋 평가(2026-11-09)로 확정 |
+| `RAG_SCORE_THRESHOLD` | - | `0.20` | 코사인 유사도 기준값. 질문셋 평가로 확정 (11/9, 11/10 재평가) |
 | `VECTOR_STORE_DIR` / `UPLOAD_DIR` | - | `/app/faiss` / `/app/uploads` | 이미지 기본값. 바꾸지 않음 |
 | `ENABLE_DOCS` | - | `false` | 배포에서는 Swagger 끔 |
 

@@ -7,6 +7,7 @@
 
 import logging
 import threading
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 
@@ -20,6 +21,10 @@ from app.core.errors import AIUnavailableError
 
 logger = logging.getLogger("ai.vector_store")
 INDEX_NAME = "index"
+
+# langchain-community는 내적 + 정규화 조합에 "Normalizing L2 is not applicable" 경고를 띄우지만,
+# 실제로는 추가·검색 때 정규화를 그대로 적용한다 (test_chat: 같은 문장 점수 = 1). 로그만 어지러워 끈다.
+warnings.filterwarnings("ignore", message="Normalizing L2 is not applicable")
 
 # 만들 때와 불러올 때 반드시 같은 옵션을 써야 한다 (저장 파일에는 이 설정이 들어가지 않음)
 FAISS_OPTIONS = {
